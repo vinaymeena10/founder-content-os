@@ -1,0 +1,5 @@
+
+{% extends "base.html" %}
+{% block title %}Error · Founder Content OS{% endblock %}
+{% block page_title %}Something went wrong{% endblock %}
+{% block content %}<section class="panel"><h2>The page could not be loaded.</h2><p class="muted">The error has been recorded in <code>logs/app.log</code>. Check that file for debugging details.</p><a class="btn primary" href="{{ url_for('index') }}">Return to Content Hub</a></section>{% endblock %}

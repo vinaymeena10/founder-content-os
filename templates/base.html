@@ -1,0 +1,180 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07152f">
+
+  <title>{% block title %}Founder Content OS{% endblock %}</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+
+  <link rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+
+  <!-- Ambient background effects -->
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <!-- Custom cursor effect -->
+  <div class="cursor-aura" id="cursorAura" aria-hidden="true">
+    <span></span>
+  </div>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+
+    <!-- Razorpay logo and workspace branding -->
+    <a class="brand"
+       href="{{ url_for('index') }}"
+       aria-label="Founder Content OS home">
+
+      <img
+        class="razorpay-logo"
+        src="{{ url_for('static', filename='razorpay-logo.png') }}"
+        alt="Razorpay"
+      >
+
+      <span class="brand-copy">
+        <small>FOUNDER CONTENT OS</small>
+      </span>
+
+    </a>
+
+    <!-- Workspace status -->
+    <div class="workspace-label">
+      WORKSPACE
+      <span class="live-pip"></span>
+    </div>
+
+    <!-- Main navigation -->
+    <nav aria-label="Main navigation">
+
+      <a href="{{ url_for('index') }}"
+         class="{{ 'active' if request.endpoint == 'index' else '' }}">
+        <span class="nav-icon">▦</span>
+        <span>Content Hub</span>
+        <span class="nav-arrow">↗</span>
+      </a>
+
+      <a href="{{ url_for('calendar') }}"
+         class="{{ 'active' if request.endpoint == 'calendar' else '' }}">
+        <span class="nav-icon">▦</span>
+        <span>Calendar</span>
+        <span class="nav-arrow">↗</span>
+      </a>
+
+      <a href="{{ url_for('summary') }}"
+         class="{{ 'active' if request.endpoint == 'summary' else '' }}">
+        <span class="nav-icon">◫</span>
+        <span>Summary</span>
+        <span class="nav-arrow">↗</span>
+      </a>
+
+    </nav>
+
+    <!-- Sidebar footer -->
+    <div class="sidebar-bottom">
+
+      <div class="sidebar-orbit">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+
+      <div class="sidebar-foot">
+        <span class="dot"></span>
+
+        <span>
+          <b>Prototype environment</b>
+          <small>Local development mode</small>
+        </span>
+      </div>
+
+    </div>
+
+  </aside>
+
+  <!-- Main content -->
+  <main class="main">
+
+    <!-- Top header -->
+    <header class="topbar">
+
+      <div>
+        <span class="eyebrow">
+          RAZORPAY
+          <span class="eyebrow-slash">/</span>
+          CONTENT STUDIO
+        </span>
+
+        <h1>{% block page_title %}Content Hub{% endblock %}</h1>
+      </div>
+
+      <div class="topbar-right">
+
+        <span class="topbar-status">
+          <span class="dot"></span>
+          All systems ready
+        </span>
+
+        <span class="avatar">CO</span>
+
+        <span class="user-label">
+          Content Operations
+          <small>Workspace member</small>
+        </span>
+
+      </div>
+
+    </header>
+
+    <!-- Flash messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-wrap">
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">
+              {{ message }}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <!-- Individual page content -->
+    {% block content %}{% endblock %}
+
+    <!-- Footer -->
+    <footer>
+
+      <span class="footer-brand">
+        <span class="footer-pip"></span>
+        RAZORPAY CONTENT OS
+      </span>
+
+      <span>
+        Built for stories that move businesses forward.
+      </span>
+
+      <span class="footer-version">
+        INTERNAL PROTOTYPE
+      </span>
+
+    </footer>
+
+  </main>
+
+  <!-- Existing JavaScript -->
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+
+</body>
+</html>

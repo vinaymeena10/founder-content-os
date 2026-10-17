@@ -1,0 +1,7 @@
+__pycache__/
+.venv/
+.env
+*.pyc
+content_data.json.lock
+logs/*.log
+backups/*.json

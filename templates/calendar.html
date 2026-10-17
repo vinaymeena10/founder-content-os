@@ -1,0 +1,14 @@
+
+{% extends "base.html" %}
+{% block title %}Calendar · Founder Content OS{% endblock %}
+{% block page_title %}Content Calendar{% endblock %}
+{% block content %}
+<section class="intro-row"><p class="muted">View shoot and go-live dates month by month.</p><div class="month-nav"><a class="btn secondary" href="{{ url_for('calendar', month=previous) }}">← Previous</a><strong>{{ month_name }} {{ year }}</strong><a class="btn secondary" href="{{ url_for('calendar', month=next_month) }}">Next →</a></div></section>
+<section class="panel calendar-panel"><div class="calendar-grid calendar-weekdays">{% for day in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'] %}<div>{{ day }}</div>{% endfor %}</div>
+<div class="calendar-grid">
+{% for week in weeks %}{% for day in week %}
+<div class="calendar-cell {{ 'out-month' if not day else '' }}"><span class="day-num">{{ day or '' }}</span>
+{% if day and events.get(day) %}{% for item in events[day] %}<div class="event {{ 'event-shoot' if item.action == 'SHOOT' else 'event-live' }}"><b>{{ item.action }}</b><span>{{ item.brand_founder }}</span><small>{{ item.topic_brief }}</small></div>{% endfor %}{% endif %}
+</div>{% endfor %}{% endfor %}
+</div></section>
+{% endblock %}
