@@ -9,6 +9,13 @@ import uuid
 
 from flask import Flask, flash, redirect, render_template, request, url_for
 from filelock import FileLock
+try:
+    import psycopg
+    from psycopg.types.json import Jsonb
+except ImportError:
+    psycopg = None
+    Jsonb = None
+
 from werkzeug.exceptions import HTTPException
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -51,7 +58,8 @@ def empty_data():
     return {
         "items": [],
         "settings": {
-            "tier_targets": {"TIER 1": 2, "TIER 2": 6, "TIER 3": 9}
+            "tier_targets": {"TIER 1": 2, "TIER 2": 6, "TIER 3": 9},
+            "recovery_options": [],
         },
     }
 
@@ -74,287 +82,169 @@ def month_for_item(item):
         return planned
     item_date = item.get("date", "")
     return item_date[:7] if valid_month(item_date[:7]) else ""
+def get_database_url():
+    return os.environ.get("DATABASE_URL", "").strip()
 
 
-def load_data():
+def connect_database():
+    url = get_database_url()
+
+    if not url:
+        raise RuntimeError("DATABASE_URL is not configured.")
+
+    if psycopg is None:
+        raise RuntimeError(
+            "PostgreSQL driver missing. Install psycopg[binary]."
+        )
+
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+
+    return psycopg.connect(url, connect_timeout=10)
+
+
+def ensure_database_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS founder_content_state (
+            id SMALLINT PRIMARY KEY CHECK (id = 1),
+            payload JSONB NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+
+
+def _normalize_data(data):
+    """Keep stored data compatible with all app screens."""
+    if isinstance(data, list):
+        data = {
+            "items": data,
+            "settings": empty_data()["settings"],
+        }
+
+    if not isinstance(data, dict):
+        raise ValueError("Stored data must be an object or legacy list.")
+
+    data.setdefault("items", [])
+    data.setdefault("settings", empty_data()["settings"])
+    data["settings"].setdefault(
+        "tier_targets",
+        empty_data()["settings"]["tier_targets"],
+    )
+    data["settings"].setdefault("recovery_options", [])
+
+    for item in data["items"]:
+        if not item.get("planned_month"):
+            item["planned_month"] = (item.get("date") or "")[:7]
+
+    return data
+
+
+def _load_json_data():
+    """Read the existing local JSON data safely."""
     with FileLock(str(LOCK_FILE)):
         if not DATA_FILE.exists():
-            DATA_FILE.write_text(json.dumps(empty_data(), indent=2), encoding="utf-8")
-        try:
-            data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                data = {"items": data, "settings": empty_data()["settings"]}
-            if not isinstance(data, dict):
-                raise ValueError("JSON root must be an object or legacy list.")
-            data.setdefault("items", [])
-            data.setdefault("settings", empty_data()["settings"])
-            data["settings"].setdefault(
-                "tier_targets", empty_data()["settings"]["tier_targets"]
+            DATA_FILE.write_text(
+                json.dumps(empty_data(), indent=2),
+                encoding="utf-8",
             )
 
-            # Backward-compatible migration: older records get a planned month
-            # based on their existing date. This does not delete or duplicate records.
-            changed = False
-            for item in data["items"]:
-                if not item.get("planned_month"):
-                    item["planned_month"] = (item.get("date") or "")[:7]
-                    changed = True
-                if item.get("status") == "Incomplete":
-                    # Keep existing incomplete items as-is; they are included
-                    # in future workloads by the month selection logic.
-                    pass
-
-            if changed:
-                _write_data_unlocked(data)
-            return data
+        try:
+            data = json.loads(
+                DATA_FILE.read_text(encoding="utf-8")
+            )
+            return _normalize_data(data)
         except (json.JSONDecodeError, OSError, ValueError):
             logging.exception("Could not read content_data.json")
             raise
 
 
+def _load_database_data():
+    """Load data from PostgreSQL, importing JSON on first use."""
+    with connect_database() as conn:
+        ensure_database_table(conn)
+
+        with conn.transaction():
+            row = conn.execute(
+                "SELECT payload FROM founder_content_state WHERE id = 1"
+            ).fetchone()
+
+            if row is None:
+                # Preserve existing JSON data on the first deployment.
+                initial = _load_json_data()
+
+                conn.execute(
+                    """
+                    INSERT INTO founder_content_state (id, payload)
+                    VALUES (1, %s)
+                    ON CONFLICT (id) DO NOTHING
+                    """,
+                    (Jsonb(initial),),
+                )
+
+                row = conn.execute(
+                    "SELECT payload FROM founder_content_state WHERE id = 1"
+                ).fetchone()
+
+            data = _normalize_data(row[0])
+
+            conn.execute(
+                """
+                UPDATE founder_content_state
+                SET payload = %s, updated_at = NOW()
+                WHERE id = 1
+                """,
+                (Jsonb(data),),
+            )
+
+            return data
+
+
+def load_data():
+    """Use PostgreSQL on Render and JSON locally."""
+    if get_database_url():
+        return _load_database_data()
+
+    return _load_json_data()
+
+
 def _write_data_unlocked(data):
-    """Atomic write helper; caller must hold the file lock."""
+    """Write local JSON safely; caller must hold the file lock."""
     if DATA_FILE.exists():
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         backup = BACKUP_DIR / f"content_data_{stamp}.json"
         shutil.copy2(DATA_FILE, backup)
+
     temp_file = DATA_FILE.with_suffix(".json.tmp")
     temp_file.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        json.dumps(data, indent=2, ensure_ascii=False),
+        encoding="utf-8",
     )
     temp_file.replace(DATA_FILE)
 
 
 def save_data(data):
-    """Write safely with a lock, timestamped backup, and atomic replacement."""
-    with FileLock(str(LOCK_FILE)):
-        _write_data_unlocked(data)
-    logging.info("Saved content data; records=%s", len(data.get("items", [])))
+    """Save to PostgreSQL on Render and JSON locally."""
+    data = _normalize_data(data)
 
-
-def normalize_date(value):
-    if not value:
-        return ""
-    try:
-        return datetime.strptime(value, "%Y-%m-%d").date().isoformat()
-    except ValueError:
-        return ""
-
-
-def item_from_form(form, existing=None):
-    existing = existing or {}
-    date_value = normalize_date(form.get("date", ""))
-    planned_month = valid_month(form.get("planned_month", ""))
-    if not planned_month and date_value:
-        planned_month = date_value[:7]
-
-    status = form.get("status", "Idea")
-    if status not in STATUSES:
-        status = "Idea"
-
-    return {
-        "id": existing.get("id") or str(uuid.uuid4()),
-        "date": date_value,
-        "planned_month": planned_month,
-        "action": form.get("action", "GO LIVE")
-        if form.get("action") in ACTIONS else "GO LIVE",
-        "tier": form.get("tier", "TIER 1")
-        if form.get("tier") in TIERS else "TIER 1",
-        "ip": form.get("ip", "").strip(),
-        "brand_founder": form.get("brand_founder", "").strip(),
-        "topic_brief": form.get("topic_brief", "").strip(),
-        "format": form.get("format", "Other")
-        if form.get("format") in FORMATS else "Other",
-        "editor": form.get("editor", "").strip(),
-        "brief_shared": bool(form.get("brief_shared")),
-        "internal_approval": bool(form.get("internal_approval")),
-        "founder_approval": bool(form.get("founder_approval")),
-        "status": status,
-        "remarks": form.get("remarks", "").strip(),
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
-    }
-
-
-@app.errorhandler(Exception)
-def handle_error(error):
-    if isinstance(error, HTTPException):
-        return error
-    logging.exception("Unhandled application error")
-    if app.debug:
-        raise error
-    return render_template("error.html"), 500
-
-
-@app.get("/")
-def index():
-    data = load_data()
-    current_month = valid_month(request.args.get("month", "")) or date.today().strftime("%Y-%m")
-
-    # Include records assigned to the selected month, plus any incomplete
-    # record assigned to an earlier month. Do not duplicate or change its ID/date.
-    items = [
-        item for item in data["items"]
-        if (
-            month_for_item(item) == current_month
-            or (
-                item.get("status") == "Incomplete"
-                and month_for_item(item)
-                and month_for_item(item) < current_month
+    if get_database_url():
+        with connect_database() as conn:
+            ensure_database_table(conn)
+            conn.execute(
+                """
+                INSERT INTO founder_content_state
+                    (id, payload, updated_at)
+                VALUES (1, %s, NOW())
+                ON CONFLICT (id) DO UPDATE
+                SET payload = EXCLUDED.payload,
+                    updated_at = NOW()
+                """,
+                (Jsonb(data),),
             )
-        )
-    ]
-    items.sort(
-        key=lambda x: (
-            month_for_item(x) or "9999-99",
-            x.get("date") or "9999-12-31",
-            x.get("brand_founder", "").lower(),
-        )
-    )
-    incomplete_count = sum(1 for item in items if item.get("status") == "Incomplete")
-    return render_template(
-        "index.html",
-        items=items,
-        statuses=STATUSES,
-        actions=ACTIONS,
-        tiers=TIERS,
-        formats=FORMATS,
-        current_month=current_month,
-        incomplete_count=incomplete_count,
-    )
-
-
-@app.post("/add")
-def add_item():
-    form = request.form
-    if not form.get("brand_founder", "").strip() or not form.get("topic_brief", "").strip():
-        flash("Brand/founder and topic/brief are required.", "error")
-        return redirect(url_for("index"))
-    if not normalize_date(form.get("date", "")):
-        flash("Please enter a valid shoot/go-live date.", "error")
-        return redirect(url_for("index"))
-    planned_month = valid_month(form.get("planned_month", ""))
-    if not planned_month:
-        planned_month = normalize_date(form.get("date", ""))[:7]
-
-    data = load_data()
-    item = item_from_form(form)
-    item["planned_month"] = planned_month
-    data["items"].append(item)
-    save_data(data)
-    flash("Content item added.", "success")
-    return redirect(url_for("index", month=planned_month))
-
-
-@app.post("/edit/<item_id>")
-def edit_item(item_id):
-    data = load_data()
-    for i, existing in enumerate(data["items"]):
-        if existing.get("id") == item_id:
-            form = request.form
-            if not form.get("brand_founder", "").strip() or not form.get("topic_brief", "").strip():
-                flash("Brand/founder and topic/brief are required.", "error")
-                return redirect(url_for("index"))
-            if not normalize_date(form.get("date", "")):
-                flash("Please enter a valid shoot/go-live date.", "error")
-                return redirect(url_for("index"))
-            data["items"][i] = item_from_form(form, existing)
-            save_data(data)
-            flash("Content item updated.", "success")
-            return redirect(url_for("index", month=month_for_item(data["items"][i]) or date.today().strftime("%Y-%m")))
-    flash("Content item not found.", "error")
-    return redirect(url_for("index"))
-
-
-@app.post("/delete/<item_id>")
-def delete_item(item_id):
-    data = load_data()
-    old_count = len(data["items"])
-    data["items"] = [x for x in data["items"] if x.get("id") != item_id]
-    if len(data["items"]) != old_count:
-        save_data(data)
-        flash("Content item deleted.", "success")
     else:
-        flash("Content item not found.", "error")
-    return redirect(url_for("index"))
+        with FileLock(str(LOCK_FILE)):
+            _write_data_unlocked(data)
 
-
-@app.get("/calendar")
-def calendar():
-    data = load_data()
-    month_str = valid_month(request.args.get("month", "")) or date.today().strftime("%Y-%m")
-    month = datetime.strptime(month_str, "%Y-%m")
-    year, month_num = month.year, month.month
-    first_weekday, days_in_month = calendar_module.monthrange(year, month_num)
-    weeks, week = [], [None] * first_weekday
-    for day in range(1, days_in_month + 1):
-        week.append(day)
-        if len(week) == 7:
-            weeks.append(week)
-            week = []
-    if week:
-        weeks.append(week + [None] * (7 - len(week)))
-
-    events = {}
-    for item in data["items"]:
-        event_date = item.get("date", "")
-        if event_date.startswith(f"{year:04d}-{month_num:02d}-"):
-            events.setdefault(int(event_date[-2:]), []).append(item)
-
-    previous = (date(year, month_num, 1) - timedelta(days=1)).strftime("%Y-%m")
-    next_month_date = date(year + (month_num == 12), 1 if month_num == 12 else month_num + 1, 1)
-    next_month = next_month_date.strftime("%Y-%m")
-
-    return render_template(
-        "calendar.html",
-        year=year,
-        month_name=month.strftime("%B"),
-        month_str=month_str,
-        weeks=weeks,
-        events=events,
-        previous=previous,
-        next_month=next_month,
+    logging.info(
+        "Saved content data; records=%s",
+        len(data.get("items", [])),
     )
-
-
-@app.get("/summary")
-def summary():
-    data = load_data()
-    month_str = valid_month(request.args.get("month", "")) or date.today().strftime("%Y-%m")
-
-    # Same workload logic as the Content Hub: selected-month items plus older
-    # incomplete items. History remains stored once in the JSON file.
-    month_items = [
-        item for item in data["items"]
-        if (
-            month_for_item(item) == month_str
-            or (
-                item.get("status") == "Incomplete"
-                and month_for_item(item)
-                and month_for_item(item) < month_str
-            )
-        )
-    ]
-    published = [x for x in month_items if x.get("status") == "Published"]
-    pending = [x for x in month_items if x.get("status") not in ("Published", "On hold")]
-    targets = data.get("settings", {}).get("tier_targets", {"TIER 1": 2, "TIER 2": 6, "TIER 3": 9})
-    tier_counts = {
-        tier: sum(1 for x in month_items if x.get("tier") == tier and x.get("status") == "Published")
-        for tier in TIERS
-    }
-    return render_template(
-        "summary.html",
-        month_str=month_str,
-        total=len(month_items),
-        published=len(published),
-        pending=len(pending),
-        shoots=sum(1 for x in month_items if x.get("action") == "SHOOT"),
-        targets=targets,
-        tier_counts=tier_counts,
-        items=month_items,
-    )
-
-
-if __name__ == "__main__":
-    load_data()
-    # Local development only; deploy behind a production WSGI server for team access.
-    app.run(host="127.0.0.1", port=5000, debug=True)
