@@ -1,40 +1,26 @@
+# Founder Content OS — tier planning and recovery update
 
-# Founder Content OS — MVP
+## Features
+- Content Hub uses three tier cards instead of generic total/status KPI boxes.
+- Tier cards show planned GO LIVE items, actual Published items, base target, carry-forward, and adjusted target.
+- Monthly shortfalls carry forward without duplicating old content records.
+- Content Hub table shows only the selected month; history remains in `content_data.json`.
+- Calendar events display action, brand/founder, IP name, and topic.
+- Recovery tab lets you maintain backup brand/IP options by tier and highlights tier shortfalls.
+- Local JSON storage with file locking and backups remains in place in this version.
 
-A Flask website prototype for managing a founder/brand content pipeline. It uses local JSON storage and does not use Google Sheets or Google OAuth.
+## Run locally
+```bash
+pip install -r requirements.txt
+python app.py
+```
+Then open http://127.0.0.1:5000.
 
-## Pages
-- Content Hub: create, edit, search, and delete content records
-- Calendar: monthly view of shoot and go-live dates
-- Summary: monthly KPIs and tier progress
+## Notes
+- A GO LIVE item counts as planned when its action is `GO LIVE` and it is assigned to the selected planned month.
+- It counts as delivered only when its status is `Published`.
+- Carry-forward is calculated from previous months that contain records. Review the target settings and month records as you begin using the dashboard.
+- This update does not implement PostgreSQL persistence yet; it focuses on the dashboard, calendar, and recovery workflow.
 
-## Run on Windows
 
-1. Install Python 3.10 or newer.
-2. Extract this folder somewhere easy to find.
-3. Open Command Prompt in this folder and run:
-
-   ```bat
-   py -m venv .venv
-   .venv\Scripts\activate
-   pip install -r requirements.txt
-   python app.py
-   ```
-
-4. Open `http://127.0.0.1:5000` in your browser.
-
-## Important before organization-wide use
-
-This is a local development MVP. It currently binds to `127.0.0.1`, so only the same computer can access it. For organizational access, deploy it on an approved company server or cloud environment, use a production server such as Waitress, enable HTTPS, add authentication and role permissions, and configure backups. Do not expose this prototype publicly as-is.
-
-## JSON storage
-
-Records are stored in `content_data.json`. Each save creates a timestamped backup in `backups/`, and application logs go to `logs/app.log`. The app uses a file lock and atomic replacement to reduce the risk of conflicting writes.
-
-The initial tier targets are placeholders copied from one earlier prototype: Tier 1 = 2, Tier 2 = 6, Tier 3 = 9. Confirm these targets before relying on the Summary page.
-
-## Suggested next steps
-1. Confirm fields, statuses, tier targets, and monthly KPI definitions.
-2. Add login and role-based permissions.
-3. Deploy to an organization-approved server.
-4. Test simultaneous editing, backup restore, and error handling.
+Logo setup: place your horizontal Razorpay wordmark at `static/razorpay-icon.png`. The sidebar displays it directly on the navy background without a frame. Keep the file name exactly as shown or update the image filename in `templates/base.html`.

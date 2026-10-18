@@ -9,14 +9,6 @@ import uuid
 
 from flask import Flask, flash, redirect, render_template, request, url_for
 from filelock import FileLock
-
-# psycopg is used only when DATABASE_URL is configured (e.g. on Render).
-try:
-    import psycopg
-    from psycopg.types.json import Jsonb
-except ImportError:  # Local JSON mode can still run without the database dependency.
-    psycopg = None
-    Jsonb = None
 from werkzeug.exceptions import HTTPException
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -85,37 +77,41 @@ def month_for_item(item):
     return item_date[:7] if valid_month(item_date[:7]) else ""
 
 
-def _load_json_data():
-    """Load the local JSON store (used locally and for one-time DB migration)."""
-    with FileLock(str(LOCK_FILE)):
-        if not DATA_FILE.exists():
-            DATA_FILE.write_text(json.dumps(empty_data(), indent=2), encoding="utf-8")
-        try:
-            data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                data = {"items": data, "settings": empty_data()["settings"]}
-            if not isinstance(data, dict):
-                raise ValueError("JSON root must be an object or legacy list.")
-            data.setdefault("items", [])
-            data.setdefault("settings", empty_data()["settings"])
-            data["settings"].setdefault("tier_targets", empty_data()["settings"]["tier_targets"])
-            data["settings"].setdefault("recovery_options", [])
-            return data
-        except (json.JSONDecodeError, OSError, ValueError):
-            logging.exception("Could not read content_data.json")
-            raise
+def get_database_url():
+    """Return the Render PostgreSQL URL, if configured."""
+    return os.environ.get("DATABASE_URL", "").strip()
 
 
-def _normalize_data(data):
-    """Keep the stored structure compatible with all existing app screens."""
+def connect_database():
+    """Connect to PostgreSQL using Render's DATABASE_URL."""
+    database_url = get_database_url()
+    if not database_url:
+        return None
+    try:
+        import psycopg
+    except ImportError as exc:
+        raise RuntimeError(
+            "DATABASE_URL is configured but psycopg is missing. "
+            "Add psycopg[binary] to requirements.txt and redeploy."
+        ) from exc
+    if database_url.startswith("postgres://"):
+        database_url = "postgresql://" + database_url[len("postgres://"):]
+    return psycopg.connect(database_url, connect_timeout=10)
+
+
+def _normalize_loaded_data(data):
+    """Keep existing JSON/database records compatible with the current app."""
     if isinstance(data, list):
         data = {"items": data, "settings": empty_data()["settings"]}
     if not isinstance(data, dict):
-        raise ValueError("Stored data must be an object or legacy list.")
+        raise ValueError("Stored content data must be an object or legacy list.")
     data.setdefault("items", [])
     data.setdefault("settings", empty_data()["settings"])
-    data["settings"].setdefault("tier_targets", empty_data()["settings"]["tier_targets"])
+    data["settings"].setdefault(
+        "tier_targets", empty_data()["settings"]["tier_targets"]
+    )
     data["settings"].setdefault("recovery_options", [])
+
     changed = False
     for item in data["items"]:
         if not item.get("planned_month"):
@@ -124,69 +120,61 @@ def _normalize_data(data):
     return data, changed
 
 
-def _database_url():
-    """Read the secret from the environment; never hard-code credentials."""
-    return os.environ.get("DATABASE_URL", "").strip()
-
-
-def _connect_database():
-    url = _database_url()
-    if not url:
-        raise RuntimeError("DATABASE_URL is not configured.")
-    if psycopg is None:
-        raise RuntimeError("psycopg is missing. Install requirements.txt.")
-    # Render URLs may use postgres://; psycopg accepts postgresql:// reliably.
-    if url.startswith("postgres://"):
-        url = "postgresql://" + url[len("postgres://"):]
-    return psycopg.connect(url, connect_timeout=10)
-
-
-def _ensure_database_table(conn):
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS founder_content_state (
-            id SMALLINT PRIMARY KEY CHECK (id = 1),
-            payload JSONB NOT NULL,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    """)
-
-
-def _load_database_data():
-    """Load app state from PostgreSQL, importing JSON once if the DB is empty."""
-    with _connect_database() as conn:
-        _ensure_database_table(conn)
-        with conn.transaction():
-            row = conn.execute(
-                "SELECT payload FROM founder_content_state WHERE id = 1 FOR UPDATE"
-            ).fetchone()
-            if row is None:
-                # First deploy: preserve existing JSON data if it is available.
-                initial = _load_json_data()
-                initial, _ = _normalize_data(initial)
-                conn.execute(
-                    "INSERT INTO founder_content_state (id, payload) VALUES (1, %s) ON CONFLICT (id) DO NOTHING",
-                    (Jsonb(initial),),
-                )
-                row = conn.execute(
-                    "SELECT payload FROM founder_content_state WHERE id = 1"
-                ).fetchone()
-            data, changed = _normalize_data(row[0])
+def _load_json_data():
+    """Read and migrate the local JSON file, preserving its backup behavior."""
+    with FileLock(str(LOCK_FILE)):
+        if not DATA_FILE.exists():
+            DATA_FILE.write_text(json.dumps(empty_data(), indent=2), encoding="utf-8")
+        try:
+            raw_data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+            data, changed = _normalize_loaded_data(raw_data)
             if changed:
-                conn.execute(
-                    "UPDATE founder_content_state SET payload = %s, updated_at = NOW() WHERE id = 1",
-                    (Jsonb(data),),
-                )
+                _write_data_unlocked(data)
             return data
+        except (json.JSONDecodeError, OSError, ValueError):
+            logging.exception("Could not read content_data.json")
+            raise
+
+
+def _ensure_database_table(connection):
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS founder_content_state (
+                id SMALLINT PRIMARY KEY CHECK (id = 1),
+                payload JSONB NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+    connection.commit()
 
 
 def load_data():
-    """Use PostgreSQL in deployment; retain JSON storage for local development."""
-    if _database_url():
-        return _load_database_data()
-    data, changed = _normalize_data(_load_json_data())
-    if changed:
-        save_data(data)
-    return data
+    """Load shared data from PostgreSQL on Render; use JSON for local development."""
+    connection = connect_database()
+    if connection is None:
+        return _load_json_data()
+
+    try:
+        _ensure_database_table(connection)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT payload FROM founder_content_state WHERE id = 1")
+            row = cursor.fetchone()
+
+        if row is not None:
+            data, changed = _normalize_loaded_data(row[0])
+            if changed:
+                save_data(data)
+            return data
+
+        # First deployment: import the existing local JSON data once, if present.
+        try:
+            initial_data = _load_json_data()
+        except (json.JSONDecodeError, OSError, ValueError):
+            initial_data = empty_data()
+        save_data(initial_data)
+        return initial_data
+    finally:
+        connection.close()
 
 
 def _write_data_unlocked(data):
@@ -196,30 +184,38 @@ def _write_data_unlocked(data):
         backup = BACKUP_DIR / f"content_data_{stamp}.json"
         shutil.copy2(DATA_FILE, backup)
     temp_file = DATA_FILE.with_suffix(".json.tmp")
-    temp_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    temp_file.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     temp_file.replace(DATA_FILE)
 
 
 def save_data(data):
-    """Persist to PostgreSQL when configured, otherwise use the local JSON store."""
-    data, _ = _normalize_data(data)
-    if _database_url():
-        with _connect_database() as conn:
-            _ensure_database_table(conn)
-            conn.execute(
-                """
-                INSERT INTO founder_content_state (id, payload, updated_at)
-                VALUES (1, %s, NOW())
-                ON CONFLICT (id) DO UPDATE
-                SET payload = EXCLUDED.payload, updated_at = NOW()
-                """,
-                (Jsonb(data),),
-            )
-    else:
+    """Save to shared PostgreSQL when configured, otherwise to local JSON."""
+    connection = connect_database()
+    if connection is None:
         with FileLock(str(LOCK_FILE)):
             _write_data_unlocked(data)
-    logging.info("Saved content data; records=%s; backend=%s",
-                 len(data.get("items", [])), "postgresql" if _database_url() else "json")
+    else:
+        try:
+            _ensure_database_table(connection)
+            from psycopg.types.json import Jsonb
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """INSERT INTO founder_content_state (id, payload, updated_at)
+                       VALUES (1, %s, NOW())
+                       ON CONFLICT (id) DO UPDATE
+                       SET payload = EXCLUDED.payload, updated_at = NOW()""",
+                    (Jsonb(data),),
+                )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            logging.exception("Could not save content data to PostgreSQL")
+            raise
+        finally:
+            connection.close()
+    logging.info("Saved content data; records=%s", len(data.get("items", [])))
 
 
 def normalize_date(value):

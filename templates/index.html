@@ -1,42 +1,55 @@
-
 {% extends "base.html" %}
 {% block title %}Content Hub · Founder Content OS{% endblock %}
 {% block page_title %}Content Hub{% endblock %}
 {% block content %}
-<section class="intro-row"><div><p class="muted">Plan, track, and manage every content deliverable in one place.</p></div><button class="btn primary" id="openModal">＋ Add content</button></section>
+<section class="intro-row">
+  <div>
+    <p class="muted">Plan, track, and manage every content deliverable in one place.</p>
+    <form class="month-filter-inline" method="get">
+      <label>Workload month <input type="month" name="month" value="{{ current_month }}"></label>
+      <button class="btn secondary" type="submit">View month</button>
+    </form>
+  </div>
+  <button class="btn primary" id="openModal">＋ Add content</button>
+</section>
 <section class="stats-grid">
-  <article class="stat-card"><span>Total items</span><strong>{{ items|length }}</strong><small>All tracked content</small></article>
+  <article class="stat-card"><span>Monthly workload</span><strong>{{ items|length }}</strong><small>Includes older incomplete records</small></article>
   <article class="stat-card"><span>Published</span><strong>{{ items|selectattr('status','equalto','Published')|list|length }}</strong><small>Completed deliverables</small></article>
-  <article class="stat-card"><span>In progress</span><strong>{{ items|rejectattr('status','in',['Published','On hold'])|list|length }}</strong><small>Active workflow</small></article>
-  <article class="stat-card"><span>Awaiting approval</span><strong>{{ items|selectattr('status','equalto','Awaiting approval')|list|length }}</strong><small>Needs a decision</small></article>
+  <article class="stat-card"><span>In progress</span><strong>{{ items|rejectattr('status','in',['Published','On hold','Incomplete'])|list|length }}</strong><small>Active workflow</small></article>
+  <article class="stat-card"><span>Incomplete carried forward</span><strong>{{ incomplete_count }}</strong><small>From earlier months</small></article>
 </section>
 <section class="panel">
-  <div class="panel-head"><div><h2>Content pipeline</h2><p class="muted">All records saved in the shared app's JSON data file.</p></div><input id="tableSearch" class="search" placeholder="Search content…" aria-label="Search content"></div>
-  <div class="table-wrap"><table id="contentTable"><thead><tr><th>Date</th><th>Action</th><th>Brand / Founder</th><th>Topic / Brief</th><th>Format</th><th>Tier</th><th>Editor</th><th>Status</th><th>Approvals</th><th>Actions</th></tr></thead>
+  <div class="panel-head"><div><h2>Content pipeline</h2><p class="muted">Only records assigned to {{ current_month }} are shown here. Previous-month history is retained for carry-forward calculations.</p></div><input id="tableSearch" class="search" placeholder="Search content…" aria-label="Search content"></div>
+  <div class="table-wrap"><table id="contentTable"><thead><tr><th>Planned month</th><th>Date</th><th>Action</th><th>Brand / Founder</th><th>Topic / Brief</th><th>Format</th><th>Tier</th><th>Editor</th><th>Status</th><th>Approvals</th><th>Actions</th></tr></thead>
   <tbody>
   {% for item in items %}
     <tr data-search="{{ (item.brand_founder ~ ' ' ~ item.topic_brief ~ ' ' ~ item.editor ~ ' ' ~ item.status)|lower }}">
-      <td class="nowrap">{{ item.date }}</td><td><span class="tag {{ 'purple' if item.action == 'SHOOT' else 'blue' }}">{{ item.action }}</span></td>
-      <td><strong>{{ item.brand_founder }}</strong><div class="muted small">{{ item.ip }}</div></td><td class="topic">{{ item.topic_brief }}</td><td>{{ item.format }}</td><td>{{ item.tier }}</td><td>{{ item.editor or '—' }}</td>
-      <td><span class="status">{{ item.status }}</span></td><td class="small">Brief {{ '✓' if item.brief_shared else '—' }} · Internal {{ '✓' if item.internal_approval else '—' }} · Founder {{ '✓' if item.founder_approval else '—' }}</td>
-      <td class="actions"><button class="text-btn edit-btn" data-item='{{ item|tojson|forceescape }}'>Edit</button><form method="post" action="{{ url_for('delete_item', item_id=item.id) }}" onsubmit="return confirm('Delete this content item?')"><button class="text-btn danger-text">Delete</button></form></td>
+      <td class="nowrap">{{ item.planned_month or item.date[:7] }}</td>
+      <td class="nowrap">{{ item.date }}</td>
+      <td><span class="tag {{ 'purple' if item.action == 'SHOOT' else 'blue' }}">{{ item.action }}</span></td>
+      <td><strong>{{ item.brand_founder }}</strong><div class="muted small">{{ item.ip }}</div></td>
+      <td class="topic">{{ item.topic_brief }}</td><td>{{ item.format }}</td><td>{{ item.tier }}</td><td>{{ item.editor or '—' }}</td>
+      <td><span class="status {{ 'status-incomplete' if item.status == 'Incomplete' else '' }}">{{ item.status }}{% if item.status == 'Incomplete' and (item.planned_month or item.date[:7]) < current_month %} · carried forward{% endif %}</span></td>
+      <td class="small">Brief {{ '✓' if item.brief_shared else '—' }} · Internal {{ '✓' if item.internal_approval else '—' }} · Founder {{ '✓' if item.founder_approval else '—' }}</td>
+      <td class="actions"><button class="text-btn edit-btn" data-item='{{ item|tojson|forceescape }}'>Edit</button><form method="post" action="{{ url_for('delete_item', item_id=item.id) }}" onsubmit="return confirm('Delete this content item permanently?')"><button class="text-btn danger-text">Delete</button></form></td>
     </tr>
   {% else %}
-    <tr><td colspan="10" class="empty">No content yet. Select <b>Add content</b> to create the first record.</td></tr>
+    <tr><td colspan="11" class="empty">No content for this month. Select <b>Add content</b> to create the first record.</td></tr>
   {% endfor %}
   </tbody></table></div>
 </section>
-<div class="modal-backdrop" id="contentModal" hidden><div class="modal"><div class="modal-head"><div><span class="eyebrow">CONTENT RECORD</span><h2 id="modalTitle">Add content</h2></div><button class="icon-btn" id="closeModal" aria-label="Close">×</button></div>
-<form id="contentForm" method="post" action="{{ url_for('add_item') }}"><div class="form-grid">
-  <label>Date *<input name="date" type="date" required value="{{ '' }}"></label>
+<div class="modal-backdrop" id="contentModal" hidden><div class="modal"><div class="modal-head"><div><span class="eyebrow">CONTENT RECORD</span><h2 id="modalTitle">Add content</h2></div><button type="button" class="icon-btn" id="closeModal" aria-label="Close">×</button></div>
+<form id="contentForm" method="post" action="/add"><div class="form-grid">
+  <label>Planned month *<input name="planned_month" type="month" required value="{{ current_month }}"></label>
+  <label>Shoot / go-live date *<input name="date" type="date" required></label>
   <label>Action<select name="action">{% for x in actions %}<option>{{ x }}</option>{% endfor %}</select></label>
   <label>Brand / Founder *<input name="brand_founder" required placeholder="Name or brand"></label>
   <label>IP / Campaign<input name="ip" placeholder="Campaign or IP"></label>
-  <label class="span-2">Topic / Brief *<textarea name="topic_brief" required rows="3" placeholder="What is this content about?"></textarea></label>
-  <label>Format<select name="format">{% for x in formats %}<option>{{ x }}</option>{% endfor %}</select></label>
+  <label>Format<select name="format">{% for x in formats %}<option>{{ x }}</option>{% endfor %}</label>
   <label>Tier<select name="tier">{% for x in tiers %}<option>{{ x }}</option>{% endfor %}</select></label>
   <label>Editor / Owner<input name="editor" placeholder="Assigned person"></label>
   <label>Status<select name="status">{% for x in statuses %}<option>{{ x }}</option>{% endfor %}</select></label>
+  <label class="span-2">Topic / Brief *<textarea name="topic_brief" required rows="3" placeholder="What is this content about?"></textarea></label>
   <div class="checks span-2"><label><input type="checkbox" name="brief_shared"> Brief shared</label><label><input type="checkbox" name="internal_approval"> Internal approval</label><label><input type="checkbox" name="founder_approval"> Founder approval</label></div>
   <label class="span-2">Remarks<textarea name="remarks" rows="2" placeholder="Notes, blockers, or next steps"></textarea></label>
 </div><div class="modal-actions"><button type="button" class="btn secondary" id="cancelModal">Cancel</button><button class="btn primary" type="submit">Save content</button></div></form></div></div>

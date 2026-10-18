@@ -1,3 +1,10 @@
 {
-    
+  "items": [],
+  "settings": {
+    "tier_targets": {
+      "TIER 1": 2,
+      "TIER 2": 6,
+      "TIER 3": 9
+    }
+  }
 }

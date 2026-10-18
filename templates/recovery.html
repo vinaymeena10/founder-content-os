@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Recovery · Founder Content OS{% endblock %}
+{% block page_title %}Recovery Plan{% endblock %}
+{% block content %}
+<section class="intro-row"><div><p class="muted">Review tier shortfalls and maintain backup brands/IPs for recovery shoots.</p><form class="month-filter-inline" method="get"><label>Planning month <input type="month" name="month" value="{{ month_str }}"></label><button class="btn secondary">View month</button></form></div></section>
+<section class="tier-dashboard">
+{% for tier in ['TIER 1','TIER 2','TIER 3'] %}{% set card = tier_cards[tier] %}
+<article class="tier-kpi {{ 'on-track' if card.shortfall == 0 else 'needs-attention' }}"><div class="tier-kpi-top"><span>{{ tier }}</span><span class="tier-state">{{ 'Covered' if card.shortfall == 0 else 'Recovery needed' }}</span></div><div class="tier-kpi-number">{{ card.shortfall }} <small>piece{{ '' if card.shortfall == 1 else 's' }} not yet planned</small></div><div class="tier-kpi-meta">{{ card.planned }} planned / {{ card.target }} adjusted target · {{ card.published }} published</div></article>
+{% endfor %}
+</section>
+<section class="panel"><div class="panel-head"><div><h2>Backup options</h2><p class="muted">Add your approved recovery brands and assign them to a tier. Suggestions appear when planned GO LIVE items are below the adjusted target. Published delivery is tracked separately.</p></div></div>
+<div class="recovery-grid">{% for tier in ['TIER 1','TIER 2','TIER 3'] %}{% set card = tier_cards[tier] %}<div class="recovery-tier"><h3>{{ tier }} {% if card.shortfall %}<span class="shortfall-badge">{{ card.shortfall }} short</span>{% endif %}</h3>{% set matches = options|selectattr('tier','equalto',tier)|list %}{% if matches %}{% for option in matches %}<div class="recovery-option"><div><strong>{{ option.brand }}</strong><p>{{ option.notes or 'Backup content option' }}</p></div><form method="post" action="{{ url_for('delete_recovery_option', option_id=option.id) }}" onsubmit="return confirm('Remove this recovery option?')"><button class="text-btn danger-text">Remove</button></form></div>{% endfor %}{% else %}<p class="muted small">No backup options added for this tier yet.</p>{% endif %}</div>{% endfor %}</div>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>Add backup option</h2><p class="muted">For example: Lenskart or WedChatir.com.</p></div></div><form class="recovery-form" method="post" action="{{ url_for('add_recovery_option') }}"><label>Brand / backup option<input name="brand" required placeholder="e.g. Lenskart"></label><label>Tier<select name="tier">{% for tier in tiers %}<option>{{ tier }}</option>{% endfor %}</select></label><label>Notes<input name="notes" placeholder="e.g. backup shoot for shortfall"></label><button class="btn primary">Add option</button></form></section>
+{% endblock %}

@@ -8,7 +8,7 @@
 <div class="calendar-grid">
 {% for week in weeks %}{% for day in week %}
 <div class="calendar-cell {{ 'out-month' if not day else '' }}"><span class="day-num">{{ day or '' }}</span>
-{% if day and events.get(day) %}{% for item in events[day] %}<div class="event {{ 'event-shoot' if item.action == 'SHOOT' else 'event-live' }}"><b>{{ item.action }}</b><span>{{ item.brand_founder }}</span><small>{{ item.topic_brief }}</small></div>{% endfor %}{% endif %}
+{% if day and events.get(day) %}{% for item in events[day] %}<div class="event {{ 'event-shoot' if item.action == 'SHOOT' else 'event-live' }}"><b>{{ item.action }}</b><span>{{ item.brand_founder }}</span><small class="event-ip">IP: {{ item.ip or 'Not specified' }}</small><small>{{ item.topic_brief }}</small></div>{% endfor %}{% endif %}
 </div>{% endfor %}{% endfor %}
 </div></section>
 {% endblock %}
