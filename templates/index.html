@@ -12,10 +12,28 @@
   </div>
   <button class="btn primary" id="openModal">＋ Add content</button>
 </section>
+<section class="tier-scoreboard" aria-label="Tier publishing scoreboard">
+  {% for tier in tiers %}
+    {% set card = tier_cards[tier] %}
+    {% set percent = (card.published * 100 / card.base_target)|round|int if card.base_target else 0 %}
+    <article class="tier-score-card">
+      <div class="tier-score-top"><span>{{ tier }}</span><span class="tier-score-state {{ 'score-complete' if card.published >= card.base_target else '' }}">{{ 'Target met' if card.published >= card.base_target else 'In progress' }}</span></div>
+      <div class="tier-score-number">{{ card.published }}<span> / {{ card.base_target }}</span></div>
+      <p>Published GO LIVE pieces</p>
+      <div class="score-track"><span style="width: {{ [percent, 100]|min }}%"></span></div>
+    </article>
+  {% endfor %}
+  <article class="tier-score-card carry-score-card">
+    <div class="tier-score-top"><span>CARRY FORWARD</span><span class="tier-score-state {{ 'score-complete' if overall_progress.carry_forward == 0 else '' }}">{{ 'No carry' if overall_progress.carry_forward == 0 else 'From prior months' }}</span></div>
+    <div class="tier-score-number">{{ overall_progress.carry_forward }}<span> pieces</span></div>
+    <p>Unpublished pieces carried into {{ current_month }}</p>
+    <small>Monthly target: {{ overall_progress.monthly_target }} · Adjusted target: {{ overall_progress.adjusted_target }}</small>
+  </article>
+</section>
 <section class="stats-grid">
   <article class="stat-card"><span>Monthly workload</span><strong>{{ items|length }}</strong><small>Includes older incomplete records</small></article>
-  <article class="stat-card"><span>Published</span><strong>{{ items|selectattr('status','equalto','Published')|list|length }}</strong><small>Completed deliverables</small></article>
-  <article class="stat-card"><span>In progress</span><strong>{{ items|rejectattr('status','in',['Published','On hold','Incomplete'])|list|length }}</strong><small>Active workflow</small></article>
+  <article class="stat-card"><span>Published</span><strong>{{ items|selectattr('status','equalto','Published')|selectattr('action','equalto','GO LIVE')|list|length }}</strong><small>Completed deliverables</small></article>
+  <article class="stat-card"><span>In progress</span><strong>{{ items|rejectattr('status','in',['Published','On hold','Incomplete'])|selectattr('action','equalto','GO LIVE')|list|length }}</strong><small>Active workflow</small></article>
   <article class="stat-card"><span>Incomplete carried forward</span><strong>{{ incomplete_count }}</strong><small>From earlier months</small></article>
 </section>
 <section class="panel">

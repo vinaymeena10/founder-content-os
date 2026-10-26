@@ -1,5 +1,4 @@
-Flask>=3.0,<4.0
-filelock>=3.13,<4.0
-waitress>=3.0,<4.0
+Flask
+filelock
 psycopg[binary]
 gunicorn

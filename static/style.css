@@ -232,3 +232,20 @@ footer { color:#8492a6; border-top:1px solid #e6edf5; margin-top:30px; }
     padding-bottom: 26px;
   }
 }
+
+
+/* Tier-wise publishing scoreboard and overall carry-forward cards */
+.tier-scoreboard{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin:24px 0}
+.tier-score-card{min-width:0;padding:22px 24px;border:1px solid #dce6f2;border-radius:22px;background:rgba(255,255,255,.92);box-shadow:0 12px 32px rgba(34,77,130,.055)}
+.tier-score-top{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#52657d;font-size:12px;font-weight:800;letter-spacing:.12em}
+.tier-score-state{padding:6px 9px;border-radius:999px;background:#fff3d8;color:#93651d;font-size:10px;letter-spacing:0;white-space:nowrap}
+.tier-score-state.score-complete{background:#e4f7ef;color:#247854}
+.tier-score-number{margin-top:18px;color:#152a48;font-family:'Space Grotesk',sans-serif;font-size:40px;font-weight:700;line-height:1.1}
+.tier-score-number span{color:#8292a8;font-size:21px;font-weight:600}
+.tier-score-card p{margin:9px 0 15px;color:#7b8ba0;font-size:13px}
+.tier-score-card small{display:block;color:#7b8ba0;font-size:11px;line-height:1.5}
+.score-track{height:6px;overflow:hidden;border-radius:999px;background:#e9f0f8}
+.score-track span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#2387ff,#1760d5);transition:width .2s ease}
+.carry-score-card{background:linear-gradient(145deg,#fff 0%,#f1f7ff 100%)}
+@media(max-width:1150px){.tier-scoreboard{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.tier-scoreboard{grid-template-columns:1fr;gap:12px;margin:18px 0}.tier-score-card{padding:19px}.tier-score-number{font-size:36px}}

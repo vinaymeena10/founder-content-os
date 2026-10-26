@@ -52,6 +52,7 @@ def empty_data():
         "items": [],
         "settings": {
             "tier_targets": {"TIER 1": 2, "TIER 2": 6, "TIER 3": 9},
+            "monthly_target": 20,
             "recovery_options": [],
         },
     }
@@ -111,9 +112,15 @@ def _normalize_loaded_data(data):
         "tier_targets", empty_data()["settings"]["tier_targets"]
     )
     data["settings"].setdefault("recovery_options", [])
+    data["settings"].setdefault("monthly_target", 20)
 
     changed = False
     for item in data["items"]:
+        # Normalize historical tier labels so tier scoreboards count consistently.
+        raw_tier = str(item.get("tier", "TIER 1")).strip().upper().replace("-", " ")
+        if raw_tier in {"TIER 1", "TIER 2", "TIER 3"} and item.get("tier") != raw_tier:
+            item["tier"] = raw_tier
+            changed = True
         if not item.get("planned_month"):
             item["planned_month"] = (item.get("date") or "")[:7]
             changed = True
@@ -271,19 +278,61 @@ def handle_error(error):
     return render_template("error.html"), 500
 
 
-def tier_progress(data, month_str):
-    """Calculate tier targets, prior-month carry-forward, and delivery counts.
+def monthly_progress(data, month_str):
+    """Return overall published progress and cumulative pieces carried forward.
 
-    A GO LIVE record counts as planned for its planned month. It counts as
-    delivered only when its status is Published. Shortfalls carry forward
-    without creating duplicate content records.
+    The monthly commitment is 20 published GO LIVE pieces. A prior month's
+    remaining shortfall is carried into the following month's commitment.
+    Months before the earliest recorded content are not assumed to be missed.
     """
+    settings = data.get("settings", {})
+    monthly_target = int(settings.get("monthly_target", 20) or 20)
+    items = data.get("items", [])
+    try:
+        selected = datetime.strptime(month_str, "%Y-%m").date().replace(day=1)
+    except ValueError:
+        selected = date.today().replace(day=1)
+        month_str = selected.strftime("%Y-%m")
+
+    months_with_records = sorted({month_for_item(x) for x in items
+                                  if month_for_item(x) and month_for_item(x) <= month_str})
+    carry = 0
+    if months_with_records:
+        cursor = datetime.strptime(months_with_records[0], "%Y-%m").date().replace(day=1)
+        while cursor < selected:
+            month_key = cursor.strftime("%Y-%m")
+            published_count = sum(
+                1 for item in items
+                if month_for_item(item) == month_key
+                and item.get("action") == "GO LIVE"
+                and item.get("status", "").strip().lower() == "published"
+            )
+            carry = max(0, carry + monthly_target - published_count)
+            cursor = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
+
+    current_published = sum(
+        1 for item in items
+        if month_for_item(item) == month_str
+        and item.get("action") == "GO LIVE"
+        and item.get("status", "").strip().lower() == "published"
+    )
+    adjusted_target = monthly_target + carry
+    return {
+        "monthly_target": monthly_target,
+        "carry_forward": carry,
+        "adjusted_target": adjusted_target,
+        "published": current_published,
+        "remaining": max(0, adjusted_target - current_published),
+    }
+
+
+def tier_progress(data, month_str):
+    """Calculate tier published/target scoreboard and planning shortfalls."""
     targets = data.get("settings", {}).get("tier_targets", empty_data()["settings"]["tier_targets"])
     try:
         selected = datetime.strptime(month_str, "%Y-%m").date().replace(day=1)
     except ValueError:
         selected = date.today().replace(day=1)
-    # Work forward from the earliest month that actually has a content record.
     months_with_records = sorted({month_for_item(x) for x in data.get("items", []) if month_for_item(x) and month_for_item(x) <= month_str})
     previous_carry = {tier: 0 for tier in TIERS}
     if months_with_records:
@@ -294,29 +343,23 @@ def tier_progress(data, month_str):
             month_items = [x for x in data.get("items", []) if month_for_item(x) == m and x.get("action") == "GO LIVE"]
             for tier in TIERS:
                 base = int(targets.get(tier, 0) or 0)
-                published = sum(1 for x in month_items if x.get("tier") == tier and x.get("status") == "Published")
+                published = sum(1 for x in month_items if str(x.get("tier", "")).strip().upper().replace("-", " ") == tier and str(x.get("status", "")).strip().lower() == "published")
                 previous_carry[tier] = max(0, previous_carry[tier] + base - published)
             cursor = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
     current_items = [x for x in data.get("items", []) if month_for_item(x) == month_str and x.get("action") == "GO LIVE"]
     result = {}
     for tier in TIERS:
         base = int(targets.get(tier, 0) or 0)
-        planned = sum(1 for x in current_items if x.get("tier") == tier)
-        published = sum(1 for x in current_items if x.get("tier") == tier and x.get("status") == "Published")
+        tier_items = [x for x in current_items if str(x.get("tier", "")).strip().upper().replace("-", " ") == tier]
+        planned = len(tier_items)
+        published = sum(1 for x in tier_items if str(x.get("status", "")).strip().lower() == "published")
         carry = previous_carry[tier]
         adjusted = base + carry
-        # Current-month recovery need is based on planned GO LIVE items.
-        # Actual delivery is shown separately; only published items reduce
-        # the carry-forward calculation for completed prior months.
         planned_shortfall = max(0, adjusted - planned)
         result[tier] = {
-            "base_target": base,
-            "carryover": carry,
-            "target": adjusted,
-            "planned": planned,
-            "published": published,
-            "remaining": planned_shortfall,
-            "shortfall": planned_shortfall,
+            "base_target": base, "carryover": carry, "target": adjusted,
+            "planned": planned, "published": published,
+            "remaining": planned_shortfall, "shortfall": planned_shortfall,
             "delivery_shortfall": max(0, adjusted - published),
             "on_track": planned >= adjusted,
         }
@@ -332,10 +375,11 @@ def index():
     items = [item for item in data["items"] if month_for_item(item) == current_month]
     items.sort(key=lambda x: (x.get("date") or "9999-12-31", x.get("brand_founder", "").lower()))
     tier_cards = tier_progress(data, current_month)
+    overall_progress = monthly_progress(data, current_month)
     return render_template("index.html", items=items, statuses=STATUSES, actions=ACTIONS,
         tiers=TIERS, formats=FORMATS, current_month=current_month,
         incomplete_count=sum(1 for x in data["items"] if x.get("status") == "Incomplete" and month_for_item(x) < current_month),
-        tier_cards=tier_cards)
+        tier_cards=tier_cards, overall_progress=overall_progress)
 
 
 @app.post("/add")

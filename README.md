@@ -1,26 +1,37 @@
-# Founder Content OS — tier planning and recovery update
+# Founder Content OS
+
+White-and-blue content planning dashboard with PostgreSQL support for Render and JSON storage for local development.
 
 ## Features
-- Content Hub uses three tier cards instead of generic total/status KPI boxes.
-- Tier cards show planned GO LIVE items, actual Published items, base target, carry-forward, and adjusted target.
-- Monthly shortfalls carry forward without duplicating old content records.
-- Content Hub table shows only the selected month; history remains in `content_data.json`.
-- Calendar events display action, brand/founder, IP name, and topic.
-- Recovery tab lets you maintain backup brand/IP options by tier and highlights tier shortfalls.
-- Local JSON storage with file locking and backups remains in place in this version.
+- Content Hub, Calendar, Summary, and Recovery pages.
+- Editable content records with SHOOT / GO LIVE, tier, and status.
+- Tier scoreboard on the Content Hub: published GO LIVE items versus each tier's target (Tier 1: 2, Tier 2: 6, Tier 3: 9 by default).
+- A Carry Forward card showing the cumulative number of pieces below the monthly target from previous tracked months.
+- Overall monthly target defaults to 20 published GO LIVE pieces.
+- A GO LIVE item counts as delivered only when its status is `Published`.
+- Tier labels are normalized when stored data is loaded so `tier 3`, `Tier-3`, and `TIER 3` are counted consistently.
+- Render PostgreSQL persistence via `DATABASE_URL`; local JSON persistence when `DATABASE_URL` is not set.
+- Local JSON backup and file-lock behavior.
 
 ## Run locally
 ```bash
+python -m venv .venv
+# Windows PowerShell:
+.venv\\Scripts\\Activate.ps1
 pip install -r requirements.txt
 python app.py
 ```
-Then open http://127.0.0.1:5000.
+Open http://127.0.0.1:5000.
 
-## Notes
-- A GO LIVE item counts as planned when its action is `GO LIVE` and it is assigned to the selected planned month.
-- It counts as delivered only when its status is `Published`.
-- Carry-forward is calculated from previous months that contain records. Review the target settings and month records as you begin using the dashboard.
-- This update does not implement PostgreSQL persistence yet; it focuses on the dashboard, calendar, and recovery workflow.
+## Render
+- Build command: `pip install -r requirements.txt`
+- Start command: `gunicorn app:app`
+- Set `DATABASE_URL` to the Render PostgreSQL internal connection URL.
+- Keep database credentials in Render environment variables; do not commit them.
 
+The app imports `content_data.json` into PostgreSQL only if the database has no saved application state yet. Existing PostgreSQL data takes precedence on subsequent deployments.
 
-Logo setup: place your horizontal Razorpay wordmark at `static/razorpay-icon.png`. The sidebar displays it directly on the navy background without a frame. Keep the file name exactly as shown or update the image filename in `templates/base.html`.
+## Counting rules
+- Tier scoreboard counts only records with action `GO LIVE`, the matching tier, and status `Published`.
+- The overall carry-forward calculation uses the 20-piece monthly target and published GO LIVE items in previous tracked months. It adds previous shortfall to the next month and never duplicates content records.
+- Tier planning shortfalls on Recovery remain a separate measure from actual published delivery.
